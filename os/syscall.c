@@ -83,7 +83,7 @@ int sys_task_info(struct TaskInfo *ti) {
     // struct TaskInfo *ti = (struct TaskInfo *)pa;
 	
 	
-	ti->status = Running;   // currently executing → always Running
+	ti-status = Running;   // currently executing → always Running
     // copy syscall counts
     for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
         ti->syscall_times[i] = p->syscall_times[i];
