@@ -1,10 +1,12 @@
 #ifndef PROC_H
 #define PROC_H
 
+
 #include "riscv.h"
 #include "types.h"
 
 #define NPROC (16)
+#define MAX_SYSCALL_NUM 500
 
 // Saved registers for kernel context switches.
 struct context {
@@ -41,11 +43,27 @@ struct proc {
 	/*
 	* LAB1: you may need to add some new fields here
 	*/
+	uint64 start_time;                    // cycle count when first scheduled
+    unsigned int syscall_times[MAX_SYSCALL_NUM]; // syscall counter array
 };
 
 /*
 * LAB1: you may need to define struct for TaskInfo here
 */
+#define MAX_SYSCALL_NUM 500
+
+typedef enum {
+    UnInit  = 0,
+    Running = 1,
+    Exited  = 2,
+} TaskStatus;
+
+struct TaskInfo {
+    TaskStatus status;
+    unsigned int syscall_times[MAX_SYSCALL_NUM];
+    int time;  // milliseconds since first scheduled
+};
+
 
 struct proc *curr_proc();
 void exit(int);
@@ -56,5 +74,4 @@ void yield();
 struct proc *allocproc();
 // swtch.S
 void swtch(struct context *, struct context *);
-
 #endif // PROC_H
