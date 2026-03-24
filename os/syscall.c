@@ -161,6 +161,11 @@ int sys_mmap(uint64 start, uint64 len, int port, int flag, int fd) {
 
 int sys_munmap(uint64 start, uint64 len) {
     struct proc *p = curr_proc();
+
+    // Check if start is page-aligned
+    if (start % PGSIZE != 0) {
+        return -1;
+    }
     
     // Round up to page size
     len = PGROUNDUP(len);

@@ -1,5 +1,5 @@
-#include "timer.h"
 #include "proc.h"
+#include "timer.h"
 #include "defs.h"
 #include "loader.h"
 #include "trap.h"
