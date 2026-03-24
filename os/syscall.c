@@ -40,31 +40,45 @@ uint64 sys_sched_yield()
 
 uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
 {
-	// YOUR CODE
-	    struct proc *p = curr_proc();
+	// // YOUR CODE
+	// struct proc *p = curr_proc();
+    // uint64 cycle = get_cycle();
+    
+    // // Translate virtual address to physical address
+    // uint64 pa = useraddr(p->pagetable, (uint64)val);
+    // if (pa == 0) {
+    //     return -1;  // Invalid address
+    // }
+    
+    // TimeVal *pval = (TimeVal *)pa;
+    // pval->sec = cycle / CPU_FREQ;
+    // pval->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+    // return 0;
+
+
+	// // val->sec = 0;
+	// // val->usec = 0;
+
+	// // /* The code in `ch3` will leads to memory bugs*/
+
+	// // // uint64 cycle = get_cycle();
+	// // // val->sec = cycle / CPU_FREQ;
+	// // // val->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+	// // return 0;
+
+    struct proc *p = curr_proc();
     uint64 cycle = get_cycle();
-    
-    // Translate virtual address to physical address
-    uint64 pa = useraddr(p->pagetable, (uint64)val);
-    if (pa == 0) {
-        return -1;  // Invalid address
+
+    TimeVal tv;
+    tv.sec = cycle / CPU_FREQ;
+    tv.usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+
+    // copy to user space safely
+    if (copyout(p->pagetable, (uint64)val, (char *)&tv, sizeof(tv)) < 0) {
+        return -1;
     }
-    
-    TimeVal *pval = (TimeVal *)pa;
-    pval->sec = cycle / CPU_FREQ;
-    pval->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
+
     return 0;
-
-
-	// val->sec = 0;
-	// val->usec = 0;
-
-	// /* The code in `ch3` will leads to memory bugs*/
-
-	// // uint64 cycle = get_cycle();
-	// // val->sec = cycle / CPU_FREQ;
-	// // val->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
-	// return 0;
 }
 
 // TODO: add support for mmap and munmap syscall.
@@ -73,24 +87,67 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 /*
 * LAB1: you may need to define sys_task_info here
 */
-int sys_task_info(struct TaskInfo *ti) {
+// int sys_task_info(struct TaskInfo *ti) {
+//     // struct proc *p = curr_proc();
+//     // //proj 2: Translate virtual address to physical
+//     // uint64 pa = useraddr(p->pagetable, (uint64)ti);
+//     // if (pa == 0) {
+//     //     return -1;
+//     // }
+//     // // Use the PHYSICAL address pointer, not the original virtual 'ti'
+//     // struct TaskInfo *pti = (struct TaskInfo *)pa;
+	
+	
+// 	// pti->status = Running;   // currently executing → always Running
+//     // // copy syscall counts
+//     // for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+//     //     pti->syscall_times[i] = p->syscall_times[i];
+//     // }
+//     // // compute elapsed ms since first scheduled
+//     // uint64 elapsed_cycles = get_cycle() - p->start_time;
+//     // pti->time = (int)(elapsed_cycles * 1000 / CPU_FREQ);
+//     // return 0;
+//     struct proc *p = curr_proc();
+
+//     struct TaskInfo info;
+
+//     info.status = Running;
+
+//     for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+//         info.syscall_times[i] = p->syscall_times[i];
+//     }
+
+//     uint64 elapsed_cycles = get_cycle() - p->start_time;
+//     info.time = (int)(elapsed_cycles * 1000 / CPU_FREQ);
+
+//     // SAFE copy to user space
+//     if (copyout(p->pagetable, (uint64)ti, (char *)&info, sizeof(info)) < 0) {
+//         return -1;
+//     }
+
+//     return 0;
+// }
+
+uint64 sys_task_info(struct TaskInfo *ti)
+{
     struct proc *p = curr_proc();
-    //proj 2: Translate virtual address to physical
-    uint64 pa = useraddr(p->pagetable, (uint64)ti);
-    if (pa == 0) {
+    if (!p) return -1;
+
+    struct TaskInfo info;
+
+    info.status = Running;   // use your actual enum constant
+
+    for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+        info.syscall_times[i] = p->syscall_times[i];
+    }
+
+    uint64 elapsed = get_cycle() - p->start_time;
+    info.time = elapsed * 1000 / CPU_FREQ;   // time in ms
+
+    if (copyout(p->pagetable, (uint64)ti, (char *)&info, sizeof(info)) < 0) {
         return -1;
     }
-    // struct TaskInfo *ti = (struct TaskInfo *)pa;
-	
-	
-	ti->status = Running;   // currently executing → always Running
-    // copy syscall counts
-    for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
-        ti->syscall_times[i] = p->syscall_times[i];
-    }
-    // compute elapsed ms since first scheduled
-    uint64 elapsed_cycles = get_cycle() - p->start_time;
-    ti->time = (int)(elapsed_cycles * 1000 / CPU_FREQ);
+
     return 0;
 }
 
@@ -102,63 +159,44 @@ extern char trap_page[];
 int sys_mmap(uint64 start, uint64 len, int port, int flag, int fd) {
     struct proc *p = curr_proc();
     
-    // len = 0, just return
-    if (len == 0) {
-        return 0;
+    if (len == 0) return 0;
+    if (len > 1024ULL * 1024 * 1024) return -1;
+    if (start % PGSIZE != 0) return -1;
+    if ((port & ~0x7) != 0) return -1;
+    if ((port & 0x7) == 0) return -1;
+    
+    uint64 rounded_len = PGROUNDUP(len);
+    uint64 npages = rounded_len / PGSIZE;
+    
+    // *** Check ALL pages first before allocating anything ***
+    for (uint64 i = 0; i < npages; i++) {
+        uint64 va = start + i * PGSIZE;
+        if (walkaddr(p->pagetable, va) != 0) {
+            return -1;  // Already mapped
+        }
     }
     
-    // Check max size (1 GiB)
-    if (len > 1024 * 1024 * 1024) {
-        return -1;
-    }
-    
-    // start must be page-aligned
-    if (start % PGSIZE != 0) {
-        return -1;
-    }
-    
-    // Check port: other bits must be 0
-    if ((port & ~0x7) != 0) {
-        return -1;
-    }
-    
-    // Check port: at least one of R/W/X must be set
-    if ((port & 0x7) == 0) {
-        return -1;
-    }
-    
-    // Round up to page size
-    len = PGROUNDUP(len);
-    uint64 npages = len / PGSIZE;
-    
-    // Convert port to PTE permissions
-    int perm = PTE_U | PTE_V;
+    // Convert port to PTE permissions (do NOT include PTE_V, mappages adds it)
+    int perm = PTE_U;
     if (port & 0x1) perm |= PTE_R;
     if (port & 0x2) perm |= PTE_W;
     if (port & 0x4) perm |= PTE_X;
     
-    // Map each page
+    // Allocate and map page by page
     for (uint64 i = 0; i < npages; i++) {
         uint64 va = start + i * PGSIZE;
-        
-        // Allocate physical page
         void *pa = kalloc();
-        if (pa == 0) {
-            return -1;  // Out of memory
-        }
-        
+        if (pa == 0) return -1;
         memset(pa, 0, PGSIZE);
-        
-        // Map it
         if (mappages(p->pagetable, va, PGSIZE, (uint64)pa, perm) != 0) {
             kfree(pa);
-            return -1;  // Already mapped
+            return -1;
         }
     }
     
     return 0;
 }
-
+//
 int sys_munmap(uint64 start, uint64 len) {
     struct proc *p = curr_proc();
 
@@ -183,7 +221,12 @@ int sys_munmap(uint64 start, uint64 len) {
     uvmunmap(p->pagetable, start, npages, 1);
     return 0;
 }
-//
+
+
+uint64 sys_getpid(void) {
+    struct proc *p = curr_proc();   // or myproc(), whichever your codebase uses
+    return p->pid;
+}
 
 void syscall()
 {
@@ -207,6 +250,7 @@ void syscall()
 	case SYS_exit:
 		sys_exit(args[0]);
 		// __builtin_unreachable();
+        break;
 	case SYS_sched_yield:
 		ret = sys_sched_yield();
 		break;
@@ -221,6 +265,9 @@ void syscall()
     case SYS_munmap:
 		ret = sys_munmap(args[0], args[1]);
 		break;
+    case SYS_getpid:
+        ret = sys_getpid();
+        break;        
 	/*
 	* LAB1: you may need to add SYS_taskinfo case here
 	*/
