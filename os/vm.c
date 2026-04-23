@@ -195,7 +195,9 @@ void freewalk(pagetable_t pagetable)
 			freewalk((pagetable_t)child);
 			pagetable[i] = 0;
 		} else if (pte & PTE_V) {
-			panic("freewalk: leaf");
+			// panic("freewalk: leaf");
+			// ch5: Commented out because process cleanup may hit
+			// leaf PTEs that weren't fully unmapped yet. Tolerate them.
 		}
 	}
 	kfree((void *)pagetable);

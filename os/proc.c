@@ -45,15 +45,73 @@ int allocpid()
 	return PID++;
 }
 
+// Stride scheduler: pick the RUNNABLE process with the smallest stride.
+// We scan the queue linearly and pull the chosen one out. This is O(n)
+// per schedule, which is fine because our queue is tiny.
+//
+// Why not just pop the queue FIFO-style? Because stride scheduling
+// requires us to pick by *smallest stride*, not by arrival order.
 struct proc *fetch_task()
 {
-	int index = pop_queue(&task_queue);
-	if (index < 0) {
+	// If the queue is empty, nothing to run.
+	if (task_queue.empty) {
 		debugf("No task to fetch\n");
 		return NULL;
 	}
-	debugf("fetch task %d(pid=%d) to task queue\n", index, pool[index].pid);
-	return pool + index;
+
+	// Walk the queue from front to tail to find the process with
+	// the smallest stride. The queue is circular, so indices wrap.
+	int best_qidx = -1;          // Position within the queue array
+	int best_proc_idx = -1;      // Index into the pool[] array
+	uint64 best_stride = 0;      // Smallest stride seen so far
+
+	int i = task_queue.front;
+	do {
+		int proc_idx = task_queue.data[i];
+		struct proc *p = &pool[proc_idx];
+
+		// Only consider processes that are still RUNNABLE.
+		// (A process in the queue should be RUNNABLE, but be safe.)
+		if (p->state == RUNNABLE) {
+			if (best_qidx == -1 || p->stride < best_stride) {
+				best_qidx = i;
+				best_proc_idx = proc_idx;
+				best_stride = p->stride;
+			}
+		}
+		i = (i + 1) % QUEUE_SIZE;
+	} while (i != task_queue.tail);
+
+	// No runnable process found in the queue.
+	if (best_qidx == -1) {
+		return NULL;
+	}
+
+	// Remove the chosen entry from the queue by shifting later entries
+	// backward one slot. This preserves FIFO order among equal strides.
+	int cur = best_qidx;
+	while (cur != task_queue.tail) {
+		int next = (cur + 1) % QUEUE_SIZE;
+		if (next == task_queue.tail) break;
+		task_queue.data[cur] = task_queue.data[next];
+		cur = next;
+	}
+	// Move tail back by one to drop the now-duplicated last entry.
+	task_queue.tail = (task_queue.tail - 1 + QUEUE_SIZE) % QUEUE_SIZE;
+	if (task_queue.front == task_queue.tail) {
+		task_queue.empty = 1;
+	}
+
+	struct proc *chosen = &pool[best_proc_idx];
+
+	// Advance the scheduled process's stride by its pass value.
+	// Recompute pass in case priority changed via sys_set_priority.
+	chosen->pass = BIG_STRIDE / chosen->priority;
+	chosen->stride += chosen->pass;
+
+	debugf("stride sched: pick pid=%d stride(after)=%lld prio=%lld\n",
+	       chosen->pid, chosen->stride, chosen->priority);
+	return chosen;
 }
 
 void add_task(struct proc *p)
@@ -89,6 +147,15 @@ found:
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+
+	// ---- Stride scheduling init (Project 3) ----
+	// Per the spec: initial stride = 0, initial priority = 16.
+	// pass = BIG_STRIDE / priority so higher priority => smaller pass
+	// => smaller increments => scheduled more often.
+	p->priority = DEFAULT_PRIORITY;
+	p->stride = 0;
+	p->pass = BIG_STRIDE / p->priority;
+
 	return p;
 }
 
