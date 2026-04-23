@@ -114,6 +114,7 @@ struct inode *ialloc(uint dev, short type)
 		if (dip->type == 0) { // a free inode
 			memset(dip, 0, sizeof(*dip));
 			dip->type = type;
+			dip->nlink = 1;
 			bwrite(bp);
 			brelse(bp);
 			return iget(dev, inum);
@@ -135,8 +136,10 @@ void iupdate(struct inode *ip)
 	bp = bread(ip->dev, IBLOCK(ip->inum, sb));
 	dip = (struct dinode *)bp->data + ip->inum % IPB;
 	dip->type = ip->type;
-	dip->size = ip->size;
+	
 	// LAB4: you may need to update link count here
+	dip->nlink = ip->nlink; // read memory to disk
+	dip->size = ip->size;
 	memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
 	bwrite(bp);
 	brelse(bp);
@@ -188,8 +191,10 @@ void ivalid(struct inode *ip)
 		bp = bread(ip->dev, IBLOCK(ip->inum, sb));
 		dip = (struct dinode *)bp->data + ip->inum % IPB;
 		ip->type = dip->type;
-		ip->size = dip->size;
+		
 		// LAB4: You may need to get lint count here
+		ip->nlink = dip->nlink; //read nlink from disk
+		ip->size = dip->size;
 		memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
 		brelse(bp);
 		ip->valid = 1;
@@ -208,7 +213,7 @@ void ivalid(struct inode *ip)
 void iput(struct inode *ip)
 {
 	// LAB4: Unmark the condition and change link count variable name (nlink) if needed
-	if (ip->ref == 1 && ip->valid && 0 /*&& ip->nlink == 0*/) {
+	if (ip->ref == 1 && ip->valid && ip->nlink == 0) { // If no more references AND no hard links, free the inode
 		// inode has no links and no other references: truncate and free.
 		itrunc(ip);
 		ip->type = 0;
@@ -450,5 +455,79 @@ struct inode *namei(char *path)
 	struct inode *dp = root_dir();
 	if (dp == 0)
 		panic("fs dumped.\n");
-	return dirlookup(dp, path + skip, 0);
+	struct inode *ret = dirlookup(dp, path + skip, 0);
+    iput(dp);   // release root dir ref
+	return ret; // dirlookup(dp, path + skip, 0);
+}
+
+
+
+//project4
+
+// Create a hard link: newpath points to the same inode as oldpath
+int link(char *oldpath, char *newpath)
+{
+    struct inode *ip = namei(oldpath);
+    if (ip == 0)
+        return -1;
+    ivalid(ip);
+    
+    // Get root dir and add new dirent pointing to same inode
+    struct inode *dp = root_dir();
+    if (dirlink(dp, newpath, ip->inum) < 0) {
+        iput(dp);
+        iput(ip);
+        return -1;
+    }
+    
+    // Increment nlink in both inode (in-memory) and dinode (on-disk)
+    // The tip says: use a pad field in dinode for nlink
+    ip->nlink++;           // in-memory inode
+    iupdate(ip);           // sync to disk (writes nlink via the pad you modified)
+    
+    iput(dp);
+    iput(ip);
+    return 0;
+}
+
+// Remove one hard link. If nlink reaches 0, delete the inode + data.
+int unlink(char *path)
+{
+    struct inode *dp = root_dir();
+    uint off;
+    struct inode *ip = dirlookup(dp, path, &off);
+    if (ip == 0) {
+        iput(dp);
+        return -1;
+    }
+    ivalid(ip);
+    
+    // Zero out the dirent in the directory
+    struct dirent de;
+    memset(&de, 0, sizeof(de));
+    writei(dp, 0, (uint64)&de, off, sizeof(de));
+    iput(dp);
+    
+    // Decrement link count and sync to disk
+    ip->nlink--;
+    iupdate(ip);
+    
+    // Let iput handle deletion when nlink==0 and ref drops to 0
+    iput(ip);
+    return 0;
+}
+
+// Fill in a Stat struct for a file
+int filestat(struct file *f, struct Stat *st)
+{
+    if (f->type != FD_INODE)
+        return -1;
+    struct inode *ip = f->ip;
+    ivalid(ip);
+    st->dev   = ip->dev;
+    st->ino   = ip->inum;
+    st->mode  = (ip->type == T_DIR) ? DIR : FILE_TYPE;
+    st->nlink = ip->nlink;
+    memset(st->pad, 0, sizeof(st->pad));
+    return 0;
 }

@@ -52,14 +52,47 @@ int allocpid()
 
 struct proc *fetch_task()
 {
-	int index = pop_queue(&task_queue);
-	if (index < 0) {
+	if (task_queue.empty) {
 		debugf("No task to fetch\n");
 		return NULL;
 	}
-	debugf("fetch task %d(pid=%d) from task queue\n", index,
-	       pool[index].pid);
-	return pool + index;
+
+	int best_qidx = -1;
+	int best_proc_idx = -1;
+	uint64 best_stride = 0;
+
+	int i = task_queue.front;
+	do {
+		int proc_idx = task_queue.data[i];
+		struct proc *p = &pool[proc_idx];
+		if (p->state == RUNNABLE) {
+			if (best_qidx == -1 || p->stride < best_stride) {
+				best_qidx = i;
+				best_proc_idx = proc_idx;
+				best_stride = p->stride;
+			}
+		}
+		i = (i + 1) % QUEUE_SIZE;
+	} while (i != task_queue.tail);
+
+	if (best_qidx == -1)
+		return NULL;
+
+	int cur = best_qidx;
+	while (cur != task_queue.tail) {
+		int next = (cur + 1) % QUEUE_SIZE;
+		if (next == task_queue.tail) break;
+		task_queue.data[cur] = task_queue.data[next];
+		cur = next;
+	}
+	task_queue.tail = (task_queue.tail - 1 + QUEUE_SIZE) % QUEUE_SIZE;
+	if (task_queue.front == task_queue.tail)
+		task_queue.empty = 1;
+
+	struct proc *chosen = &pool[best_proc_idx];
+	chosen->pass = BIG_STRIDE / chosen->priority;
+	chosen->stride += chosen->pass;
+	return chosen;
 }
 
 void add_task(struct proc *p)
@@ -96,6 +129,13 @@ found:
 	memset((void *)p->files, 0, sizeof(struct file *) * FD_BUFFER_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+
+	p->priority = DEFAULT_PRIORITY;
+	p->stride   = 0;
+	p->pass     = BIG_STRIDE / p->priority;
+	p->start_time = 0;
+	memset(p->syscall_times, 0, sizeof(p->syscall_times));
+
 	return p;
 }
 
@@ -180,9 +220,10 @@ void freeproc(struct proc *p)
 	if (p->pagetable)
 		freepagetable(p->pagetable, p->max_page);
 	p->pagetable = 0;
-	for (int i = 0; i > FD_BUFFER_SIZE; i++) {
+	for (int i = 0; i < FD_BUFFER_SIZE; i++) {  // was i > FD_BUFFER_SIZE
 		if (p->files[i] != NULL) {
 			fileclose(p->files[i]);
+			p->files[i] = NULL;
 		}
 	}
 	p->state = UNUSED;

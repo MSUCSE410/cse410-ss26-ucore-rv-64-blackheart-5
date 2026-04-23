@@ -6,6 +6,18 @@
 
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
+#define MAX_SYSCALL_NUM 512
+#define BIG_STRIDE 65536
+#define DEFAULT_PRIORITY 16
+
+
+typedef enum { Unused, Used, Sleeping, Runnable, Running, Zombie } TaskStatus;
+
+struct TaskInfo {
+    TaskStatus status;
+    uint32 syscall_times[MAX_SYSCALL_NUM];
+    uint32 time;
+};
 
 struct file;
 
@@ -45,6 +57,12 @@ struct proc {
 	uint64 exit_code;
 	struct file *files
 		[FD_BUFFER_SIZE]; //File descriptor table, using to record the files opened by the process
+	
+	uint64 priority;
+	uint64 stride;
+	uint64 pass;
+	uint64 start_time;
+	uint32 syscall_times[MAX_SYSCALL_NUM];
 };
 
 int cpuid();

@@ -6,7 +6,7 @@
 // Both the kernel and user programs use this header file.
 
 #define NFILE 100 // open files per system
-#define NINODE 50 // maximum number of active i-nodes
+#define NINODE 200 // maximum number of active i-nodes
 #define NDEV 10 // maximum major device number
 #define ROOTDEV 1 // device number of file system root disk
 #define MAXOPBLOCKS 10 // max # of blocks any FS op writes
@@ -31,6 +31,18 @@ struct superblock {
 	uint bmapstart; // Block number of first free map block
 };
 
+
+//project 4
+#define DIR       0x040000
+#define FILE_TYPE 0x100000
+struct Stat {
+    uint64 dev;
+    uint64 ino;
+    uint32 mode;
+    uint32 nlink;
+    uint64 pad[7];
+};
+
 #define FSMAGIC 0x10203040
 
 #define NDIRECT 12
@@ -44,10 +56,11 @@ struct superblock {
 // On-disk inode structure
 struct dinode {
 	short type; // File type
-	short pad[3];
+	short pad[2]; //remaing pads
 	// LAB4: you can reduce size of pad array and add link count below,
 	//       or you can just regard a pad as link count.
 	//       But keep in mind that you'd better keep sizeof(dinode) unchanged
+	short nlink;   // was pad[0] — repurpose this for hard link count
 	uint size; // Size of file (bytes)
 	uint addrs[NDIRECT + 1]; // Data block addresses
 };
