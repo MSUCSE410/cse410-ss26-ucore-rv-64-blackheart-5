@@ -149,7 +149,7 @@ void cond_wait(struct condvar *cond, struct mutex *m)
 	mutex_lock(m);
 }
 
-
+//toggle detection on/off per process
 int sys_enable_deadlock_detect(int enabled)
 {
     curr_proc()->deadlock_detect = enabled;

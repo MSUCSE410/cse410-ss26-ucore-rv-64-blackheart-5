@@ -251,52 +251,77 @@ int sys_waittid(int tid)
 *				for both mutex and semaphore detect, you can also
 *				use this idea or just ignore it.
 */
+
+// Banker's algorithm
+// 1. work[] = available[]; finish all threads with no requests
+// 2. find thread i where request[i] <= work[]; simulate it finishing: work += allocation[i]
+// 3. if any thread still unfinished → deadlock
 static int deadlock_detect(const int available[LOCK_POOL_SIZE],
                             const int allocation[NTHREAD][LOCK_POOL_SIZE],
                             const int request[NTHREAD][LOCK_POOL_SIZE])
 {
-    int work[LOCK_POOL_SIZE];
-    int finish[NTHREAD];
+    int work[LOCK_POOL_SIZE]; // Copy of available resources (we simulate on this)
+    int finish[NTHREAD]; // Tracks if each thread can finish (1 = done, 0 = not done)
 
+	 // Initialize work[] with currently available resources
     for (int i = 0; i < LOCK_POOL_SIZE; i++)
         work[i] = available[i];
-    for (int i = 0; i < NTHREAD; i++)
+    
+	// Initially mark all threads as not finished
+	for (int i = 0; i < NTHREAD; i++)
         finish[i] = 0;
 
-    // A thread is "done" if it's not waiting for anything
+
+	// Check which threads are not waiting for any resources
+    // If a thread has no requests, it can finish immediately
     for (int i = 0; i < NTHREAD; i++) {
-        int waiting = 0;
-        for (int j = 0; j < LOCK_POOL_SIZE; j++)
+        int waiting = 0; // Flag to check if thread is waiting for something
+        
+		//loop to check if this thread is requesting any resource
+		for (int j = 0; j < LOCK_POOL_SIZE; j++)
             if (request[i][j] > 0) { waiting = 1; break; }
         if (!waiting) finish[i] = 1;
     }
 
-    // Try to find a safe sequence
-    int changed = 1;
+    // Try to find a safe sequence where threads can finish one by one
+    int changed = 1;  // keeps track if we made progress in an iteration
     while (changed) {
-        changed = 0;
+        changed = 0; // reset iteration tracker each loop
+
+		// loop through each thread
         for (int i = 0; i < NTHREAD; i++) {
-            if (finish[i]) continue;
-            // Can all requests be satisfied?
+            if (finish[i]) continue; // skip if finished 
+            // Can thread’s requests can be satisfied with current work[], assume 1 initially-->it can
             int can = 1;
-            for (int j = 0; j < LOCK_POOL_SIZE; j++)
+            
+			
+			for (int j = 0; j < LOCK_POOL_SIZE; j++)
                 if (request[i][j] > work[j]) { can = 0; break; }
-            if (can) {
-                // Simulate this thread finishing and releasing
+            
+			// If the thread can run
+			if (can) {
+                // Simulate this thread finishing and releasing resources
                 for (int j = 0; j < LOCK_POOL_SIZE; j++)
                     work[j] += allocation[i][j];
-                finish[i] = 1;
-                changed = 1;
+                finish[i] = 1; // Mark thread as finished
+                changed = 1;  // We made progress with this thread
             }
         }
     }
 
     // If any thread is not finished, we have a deadlock
+	// check if any thread is still unfinished
     for (int i = 0; i < NTHREAD; i++)
         if (!finish[i]) return -1; // deadlock detected
-    return 0; // safe
+    return 0; // no deasdlock
 }
 
+
+// sys_mutex_create: initialize mutex_available[id] = 1
+// sys_mutex_lock: if detect on AND mutex unavailable → run Banker's → return -0xDEAD if deadlock
+//   skip current thread's own allocation when building adj_available (prevents self-deadlock false negative)
+//   after acquiring: allocation[tid][id]++, available[id]--
+// sys_mutex_unlock: allocation[tid][id]--, available[id]++, then unlock
 int sys_mutex_create(int blocking)
 {
 	struct mutex *m = mutex_create(blocking);
@@ -304,13 +329,16 @@ int sys_mutex_create(int blocking)
 		errorf("fail to create mutex: out of resource");
 		return -1;
 	}
+	
 	// LAB5: (4-1) You may want to maintain some variables for detect here
 	int mutex_id = m - curr_proc()->mutex_pool;
     // LAB5: (4-1)
-    curr_proc()->mutex_available[mutex_id] = 1;
+    curr_proc()->mutex_available[mutex_id] = 1; // this mutex is available (1 == free, not locked)
     debugf("create mutex %d", mutex_id);
     return mutex_id;
 }
+
+
 
 int sys_mutex_lock(int mutex_id)
 {
@@ -321,23 +349,33 @@ int sys_mutex_lock(int mutex_id)
 	// LAB5: (4-1) You may want to maintain some variables for detect
 	//       or call your detect algorithm here
 	struct proc *p = curr_proc();
+
+	// If deadlock detection is enabled AND mutex is currently unavailable (locked)
     if (p->deadlock_detect && p->mutex_available[mutex_id] == 0) {
-        int tid = curr_thread()->tid;
-        int adj_available[LOCK_POOL_SIZE];
-        for (int i = 0; i < LOCK_POOL_SIZE; i++)
+        int tid = curr_thread()->tid;  // Get current thread ID
+        int adj_available[LOCK_POOL_SIZE]; // a temp "available" array for simulation
+        
+		// Copy current available resources into adj_available
+		for (int i = 0; i < LOCK_POOL_SIZE; i++)
             adj_available[i] = p->mutex_available[i];
+
+		// Adjust available resources based on other running threads
         for (int i = 0; i < NTHREAD; i++) {
-            if (i == tid) continue; // skip current thread
-            struct thread *t = &p->threads[i];
+            if (i == tid) continue; // skip current thread, self-deadlock detection
+            struct thread *t = &p->threads[i]; // Get thread i
             if (t->state == T_UNUSED || t->state == EXITED)
                 continue;
             if (t->state != SLEEPING) {
+				// If thread is running, assume it will release its resources
                 for (int j = 0; j < LOCK_POOL_SIZE; j++)
                     adj_available[j] += p->mutex_allocation[i][j];
             }
         }
-        p->mutex_request[tid][mutex_id] = 1;
-        if (deadlock_detect(adj_available,
+
+        p->mutex_request[tid][mutex_id] = 1; // Mark that current thread is requesting this mutex
+        
+		// check deadlock detection algorithm
+		if (deadlock_detect(adj_available,
                             p->mutex_allocation,
                             p->mutex_request) < 0) {
             p->mutex_request[tid][mutex_id] = 0;
@@ -346,11 +384,12 @@ int sys_mutex_lock(int mutex_id)
         }
         p->mutex_request[tid][mutex_id] = 0;
     }
+	// lock the mutex (may block if unavailable)
     mutex_lock(&p->mutex_pool[mutex_id]);
     if (p->deadlock_detect) {
         int tid = curr_thread()->tid;
-        p->mutex_allocation[tid][mutex_id]++;
-        p->mutex_available[mutex_id]--;
+        p->mutex_allocation[tid][mutex_id]++; // Record that this thread now holds the mutex
+        p->mutex_available[mutex_id]--;  // Decrease available count since mutex is now taken
     }
     return 0;
 }
@@ -366,8 +405,8 @@ int sys_mutex_unlock(int mutex_id)
     // LAB5: (4-1)
     if (p->deadlock_detect) {
         int tid = curr_thread()->tid;
-        p->mutex_allocation[tid][mutex_id]--;
-        p->mutex_available[mutex_id]++;
+        p->mutex_allocation[tid][mutex_id]--; // decrease allocation since we releasing this mutex
+        p->mutex_available[mutex_id]++; // ++ available count since mutex is now free
     }
     mutex_unlock(&p->mutex_pool[mutex_id]);
     return 0;
@@ -381,8 +420,8 @@ int sys_semaphore_create(int res_count)
 		return -1;
 	}
 	// LAB5: (4-2) You may want to maintain some variables for detect here
-	int sem_id = s - curr_proc()->semaphore_pool;
-	curr_proc()->sem_available[sem_id] = res_count;
+	int sem_id = s - curr_proc()->semaphore_pool;  // calc semaphore ID by finding its index in the semaphore pool
+	curr_proc()->sem_available[sem_id] = res_count; // set to available resources
     debugf("create semaphore %d", sem_id);
     return sem_id;
 }
@@ -398,10 +437,10 @@ int sys_semaphore_up(int semaphore_id)
 	struct proc *p = curr_proc();
     if (p->deadlock_detect) {
         int tid = curr_thread()->tid;
-        if (p->sem_allocation[tid][semaphore_id] > 0)
-            p->sem_allocation[tid][semaphore_id]--;
+        if (p->sem_allocation[tid][semaphore_id] > 0)//thread has resources
+            p->sem_allocation[tid][semaphore_id]--;//dec alloc cause resource is being released
     }
-    semaphore_up(&p->semaphore_pool[semaphore_id]);
+    semaphore_up(&p->semaphore_pool[semaphore_id]); // call to do the actual semaphore "up" (signal/release)
     return 0;
 }
 
@@ -418,16 +457,20 @@ int sys_semaphore_down(int semaphore_id)
     struct semaphore *s = &p->semaphore_pool[semaphore_id];
     if (p->deadlock_detect && s->count <= 0) {
         int tid = curr_thread()->tid;
-        int available[LOCK_POOL_SIZE];
-        for (int i = 0; i < LOCK_POOL_SIZE; i++) {
+        int available[LOCK_POOL_SIZE]; // current available resources array
+        
+		// loop fill available[] with semaphore counts (only positive values)
+		for (int i = 0; i < LOCK_POOL_SIZE; i++) {
             available[i] = p->semaphore_pool[i].count > 0 ?
                            p->semaphore_pool[i].count : 0;
         }
-        int adj_available[LOCK_POOL_SIZE];
-        for (int i = 0; i < LOCK_POOL_SIZE; i++)
+        int adj_available[LOCK_POOL_SIZE]; //temp arr for simulation
+        for (int i = 0; i < LOCK_POOL_SIZE; i++)//copy from available to temp arr
             adj_available[i] = available[i];
-        for (int i = 0; i < NTHREAD; i++) {
-            if (i == tid) continue; // skip current thread
+        
+		//loop other threads
+		for (int i = 0; i < NTHREAD; i++) {
+            if (i == tid) continue; // skip current thread to avoid self-deadlock
             struct thread *t = &p->threads[i];
             if (t->state == T_UNUSED || t->state == EXITED)
                 continue;
@@ -436,7 +479,9 @@ int sys_semaphore_down(int semaphore_id)
                     adj_available[j] += p->sem_allocation[i][j];
             }
         }
-        p->sem_request[tid][semaphore_id] = 1;
+
+
+        p->sem_request[tid][semaphore_id] = 1; // thread is requesting this semaphore
         if (deadlock_detect(adj_available, p->sem_allocation, p->sem_request) < 0) {
             p->sem_request[tid][semaphore_id] = 0;
             errorf("detect deadlock on down semaphore %d!", semaphore_id);
@@ -444,11 +489,12 @@ int sys_semaphore_down(int semaphore_id)
         }
         p->sem_request[tid][semaphore_id] = 0;
     }
+	// Check if this operation will block (no resources available)
     int will_block = (s->count <= 0);
-    semaphore_down(s);
+    semaphore_down(s); // call to semaphore actual down (may block if count <= 0)
     if (p->deadlock_detect && !will_block) {
         int tid = curr_thread()->tid;
-        p->sem_allocation[tid][semaphore_id]++;
+        p->sem_allocation[tid][semaphore_id]++; //threads has 1 resource from semaphore
     }
     return 0;
 }
