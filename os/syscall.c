@@ -260,29 +260,31 @@ uint64 sys_spawn(uint64 va)
 {
 	// TODO: your job is to complete the sys call
 	struct proc *p = curr_proc();
-    char name[MAX_STR_LEN];
-    if (copyinstr(p->pagetable, name, va, MAX_STR_LEN) < 0)
+    char name[MAX_STR_LEN]; // buffer to store program name from user space
+    
+	// copy program name from user space (va) into kernel buffer
+	if (copyinstr(p->pagetable, name, va, MAX_STR_LEN) < 0)
         return -1;
 
-    struct inode *ip = namei(name);
+    struct inode *ip = namei(name); // find inode of the file
     if (ip == 0)
         return -1;
 
-    struct proc *np = allocproc();
+    struct proc *np = allocproc(); // alloc a new process
     if (np == NULL) {
-        iput(ip);
+        iput(ip); // release if failed
         return -1;
     }
 
-    bin_loader(ip, np);
-	init_stdio(np);
-    iput(ip);
+    bin_loader(ip, np); // load program (binary) into new process
+	init_stdio(np); // Initialize standard input/output for new process
+    iput(ip); // release inode
 
     char *argv[] = {NULL};
     push_argv(np, argv);
 
-    np->parent = p;
-    add_task(np);
+    np->parent = p; // Set parent process
+    add_task(np); // put process in scheduler
     return np->pid;
 }
 
@@ -291,8 +293,7 @@ uint64 sys_spawn(uint64 va)
 // Returns prio on success, -1 on failure.
 uint64 sys_set_priority(long long prio){
     // TODO: your job is to complete the sys call
-    // Priority must be >= 2 (priority of 1 would make pass = BIG_STRIDE,
-	// which starves every other process; priority of 0 is division-by-zero).
+    // Priority must be >= 2 to prevent starvation 
 	if (prio < 2) {
 		return -1;
 	}
@@ -300,7 +301,8 @@ uint64 sys_set_priority(long long prio){
 	struct proc *p = curr_proc();
 	p->priority = (uint64)prio;
 
-	// Recompute pass immediately so the next scheduling reflects the new priority.
+	// Recompute pass value for stride scheduling
+	// Lower pass = runs more often
 	p->pass = BIG_STRIDE / p->priority;
 
 	return prio;
@@ -345,11 +347,12 @@ int sys_fstat(int fd,uint64 stat){
     if (fd < 0 || fd >= FD_BUFFER_SIZE || p->files[fd] == 0)
         return -1;
     
-    struct Stat st;
+    struct Stat st; // def temp struct to hold file info
+	// Get file statistics
     int ret = filestat(p->files[fd], &st);
     if (ret < 0) return -1;
     
-    if (copyout(p->pagetable, stat, (char *)&st, sizeof(st)) < 0)
+    if (copyout(p->pagetable, stat, (char *)&st, sizeof(st)) < 0)// Copy back to user space
         return -1;
     return 0;
 }
@@ -357,11 +360,11 @@ int sys_fstat(int fd,uint64 stat){
 int sys_linkat(int olddirfd, uint64 oldpath_va, int newdirfd, uint64 newpath_va, uint64 flags){
 	//TODO: your job is to complete the syscall
 	struct proc *p = curr_proc();
-    char oldpath[200], newpath[200];
+    char oldpath[200], newpath[200];//buffer arr to store path from user space
     copyinstr(p->pagetable, oldpath, oldpath_va, 200);
     copyinstr(p->pagetable, newpath, newpath_va, 200);
     
-    // Can't link to same name
+    // Can't link the same file
     if (strncmp(oldpath, newpath, 200) == 0)
         return -1;
     
@@ -371,8 +374,8 @@ int sys_linkat(int olddirfd, uint64 oldpath_va, int newdirfd, uint64 newpath_va,
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
 	//TODO: your job is to complete the syscall
 	struct proc *p = curr_proc();
-    char path[200];
-    copyinstr(p->pagetable, path, name, 200);
+    char path[200];//buffer arr
+    copyinstr(p->pagetable, path, name, 200); //copy from user space to kernel
     return unlink(path); // calls into fs.c
 }
 

@@ -470,20 +470,21 @@ int link(char *oldpath, char *newpath)
     struct inode *ip = namei(oldpath);
     if (ip == 0)
         return -1;
-    ivalid(ip);
+    ivalid(ip); //valid inode?
     
     // Get root dir and add new dirent pointing to same inode
     struct inode *dp = root_dir();
+
+	// Add new directory entry (newpath) pointing to same inode
     if (dirlink(dp, newpath, ip->inum) < 0) {
-        iput(dp);
+        iput(dp); //release dir inode n file inode
         iput(ip);
         return -1;
     }
     
     // Increment nlink in both inode (in-memory) and dinode (on-disk)
-    // The tip says: use a pad field in dinode for nlink
-    ip->nlink++;           // in-memory inode
-    iupdate(ip);           // sync to disk (writes nlink via the pad you modified)
+    ip->nlink++;           // update in-memory inode
+    iupdate(ip);           // updated inode back to disk
     
     iput(dp);
     iput(ip);
@@ -493,9 +494,9 @@ int link(char *oldpath, char *newpath)
 // Remove one hard link. If nlink reaches 0, delete the inode + data.
 int unlink(char *path)
 {
-    struct inode *dp = root_dir();
-    uint off;
-    struct inode *ip = dirlookup(dp, path, &off);
+    struct inode *dp = root_dir(); //root dir
+    uint off; //store offset of dir entry
+    struct inode *ip = dirlookup(dp, path, &off); //find file and pos in dir
     if (ip == 0) {
         iput(dp);
         return -1;
@@ -504,8 +505,8 @@ int unlink(char *path)
     
     // Zero out the dirent in the directory
     struct dirent de;
-    memset(&de, 0, sizeof(de));
-    writei(dp, 0, (uint64)&de, off, sizeof(de));
+    memset(&de, 0, sizeof(de)); // Clear the directory entry
+    writei(dp, 0, (uint64)&de, off, sizeof(de)); // Write empty entry back to directory
     iput(dp);
     
     // Decrement link count and sync to disk
@@ -520,14 +521,15 @@ int unlink(char *path)
 // Fill in a Stat struct for a file
 int filestat(struct file *f, struct Stat *st)
 {
+	// check file type (inode-backed/regular files files)
     if (f->type != FD_INODE)
         return -1;
-    struct inode *ip = f->ip;
+    struct inode *ip = f->ip; // Get inode from file
     ivalid(ip);
-    st->dev   = ip->dev;
-    st->ino   = ip->inum;
-    st->mode  = (ip->type == T_DIR) ? DIR : FILE_TYPE;
+    st->dev   = ip->dev;//get disk/device id
+    st->ino   = ip->inum;//get inode id
+    st->mode  = (ip->type == T_DIR) ? DIR : FILE_TYPE;//set the file type
     st->nlink = ip->nlink;
-    memset(st->pad, 0, sizeof(st->pad));
+    memset(st->pad, 0, sizeof(st->pad));// Clear unused padding
     return 0;
 }
