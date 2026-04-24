@@ -8,7 +8,10 @@
 #define NPROC (128)
 #define NTHREAD (16)
 #define FD_BUFFER_SIZE (16)
-#define LOCK_POOL_SIZE (8)
+#define LOCK_POOL_SIZE (16)
+
+#define DETECT_MAX_THREAD (NTHREAD)  // keep same logical size
+#define DETECT_MAX_LOCK   (LOCK_POOL_SIZE)
 
 struct file;
 
@@ -66,6 +69,13 @@ struct proc {
 	// LAB5: (1) Define your variables for deadlock detect here.
 	//			 You may need a flag to record if detection enabled,
 	//       and some arrays for detection algorithm.
+	int deadlock_detect;
+	int mutex_available[LOCK_POOL_SIZE];
+	int mutex_allocation[NTHREAD][LOCK_POOL_SIZE];
+	int mutex_request[NTHREAD][LOCK_POOL_SIZE];
+	int sem_available[LOCK_POOL_SIZE];
+	int sem_allocation[NTHREAD][LOCK_POOL_SIZE];
+	int sem_request[NTHREAD][LOCK_POOL_SIZE];
 };
 
 int cpuid();

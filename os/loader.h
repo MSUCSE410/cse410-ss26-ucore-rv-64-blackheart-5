@@ -10,8 +10,8 @@ int load_init_app();
 int bin_loader(struct inode *, struct proc *);
 
 #define BASE_ADDRESS (0x1000)
-#define USTACK_SIZE (PAGE_SIZE)
-#define KSTACK_SIZE (PAGE_SIZE)
+#define USTACK_SIZE (PAGE_SIZE*4)
+#define KSTACK_SIZE (PAGE_SIZE * 2)
 #define TRAP_PAGE_SIZE (PAGE_SIZE)
 
 #endif // LOADER_H

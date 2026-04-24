@@ -148,3 +148,10 @@ void cond_wait(struct condvar *cond, struct mutex *m)
 	debugf("wake up from cond");
 	mutex_lock(m);
 }
+
+
+int sys_enable_deadlock_detect(int enabled)
+{
+    curr_proc()->deadlock_detect = enabled;
+    return 0;
+}
