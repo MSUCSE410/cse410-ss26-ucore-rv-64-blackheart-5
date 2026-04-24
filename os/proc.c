@@ -46,11 +46,6 @@ int allocpid()
 }
 
 // Stride scheduler: pick the RUNNABLE process with the smallest stride.
-// We scan the queue linearly and pull the chosen one out. This is O(n)
-// per schedule, which is fine because our queue is tiny.
-//
-// Why not just pop the queue FIFO-style? Because stride scheduling
-// requires us to pick by *smallest stride*, not by arrival order.
 struct proc *fetch_task()
 {
 	// If the queue is empty, nothing to run.

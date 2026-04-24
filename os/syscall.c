@@ -184,75 +184,49 @@ uint64 sys_wait(int pid, uint64 va)
 	return wait(pid, code);
 }
 
-// spawn: create a new child process that runs the program named `va`.
-// Equivalent to fork+exec BUT without ever copying the parent's memory.
-//
-// Why not just call fork() then exec() in the kernel?
-// Because fork() sets up the child's context so it returns to usertrapret
-// with ra/sp pointing into the child's kernel stack. If we then called
-// exec() here, it would run on the *current* process (the parent), replacing
-// the parent's memory. That's the opposite of what we want.
-//
-// So we build the child directly:
-//   1) allocproc  -> new PCB with fresh page table
-//   2) bin_loader -> map the target program into that page table
-//   3) parent link + add to ready queue
-//
-// Returns the child's pid on success, -1 on any error.
+
 uint64 sys_spawn(uint64 va)
 {
 	// TODO: your job is to complete the sys call
 	struct proc *p = curr_proc();
 
-	// ---- 1. Copy the filename from user space into the kernel ----
+	// copy the filename from user space into the kernel
 	char name[MAX_STR_LEN];
 	if (copyinstr(p->pagetable, name, va, MAX_STR_LEN) < 0) {
 		return -1;
 	}
 
-	// ---- 2. Look up the app id (invalid filename -> error) ----
+	// look up the app id (error on invalid file)
 	int id = get_id_by_name(name);
 	if (id < 0) {
 		return -1;
 	}
 
-	// ---- 3. Allocate a new PCB (full process pool -> error) ----
+	// allocate a new PCB (full process pool -> error)
 	struct proc *np = allocproc();
 	if (np == NULL) {
 		return -1;
 	}
 
-	// ---- 4. Load the target program into the child's page table ----
-	// `loader` calls `bin_loader` which: allocates pages, copies the
-	// program's .text/.data into them, maps them at BASE_ADDRESS,
-	// allocates a user stack, sets up trapframe (sp, epc), and sets
-	// state = RUNNABLE. No parent memory is copied anywhere.
-	// Note: loader() currently panics internally on memory errors,
-	// so it won't return < 0 in practice. We keep the check for safety,
-	// but can't call freeproc here because it isn't declared in proc.h.
-	// On loader failure the kernel would panic anyway.
+	// load the program into the child's page table
+
 	if (loader(id, np) < 0) {
 		return -1;
 	}
-	// ---- 5. Establish parent-child relationship ----
-	// Needed so the parent can wait() on this child and collect exit code.
+	// set parent-child 
 	np->parent = p;
 
-	// ---- 6. Make the child eligible for scheduling ----
-	// bin_loader already set state = RUNNABLE; just put it in the queue.
+	// add child to scheduling ----
 	add_task(np);
 
-	// ---- 7. Return child's PID (like fork does for the parent) ----
+	// return child's PID (like fork does for the parent)
 	return np->pid;
 }
 
-// Set the priority of the calling process.
-// Per spec: prio must be in [2, isize_max]. We accept any prio >= 2.
-// Returns prio on success, -1 on failure.
+
 uint64 sys_set_priority(long long prio){
     // TODO: your job is to complete the sys call
-    // Priority must be >= 2 (priority of 1 would make pass = BIG_STRIDE,
-	// which starves every other process; priority of 0 is division-by-zero).
+    // Priority must be >= 2 (else error)
 	if (prio < 2) {
 		return -1;
 	}
